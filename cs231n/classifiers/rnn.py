@@ -137,7 +137,58 @@ class CaptioningRNN(object):
         # defined above to store loss and gradients; grads[k] should give the      #
         # gradients for self.params[k].                                            #
         ############################################################################
-        pass
+                
+        ####################
+        #### GO FORWARD ####
+        ####################
+        
+        # (1) compute initial hidden state from image features
+        h0, cacheTmp = affine_forward(features, W_proj, b_proj)
+        cacheList = list()
+        cacheList.append(cacheTmp)
+        
+        # (2) transform wods in caption_in from indices to vectors
+        wordVecs, cacheTmp = word_embedding_forward(captions_in, W_embed)
+        cacheList.append(cacheTmp)
+
+        # (3) use RNN/LSTM to produce hidden state vectors for all timesteps
+        if self.cell_type == 'rnn':
+            h, cacheTmp = rnn_forward(wordVecs, h0, Wx, Wh, b)
+        cacheList.append(cacheTmp)
+
+        # (4) compute scores over the vocabulary at every timestep using hidden states
+        out, cacheTmp = temporal_affine_forward(h, W_vocab, b_vocab)
+        cacheList.append(cacheTmp)
+
+        # (5) use softmax to compute loss
+        loss, dout = temporal_softmax_loss(out, captions_out, mask, verbose=False)
+        
+        ####################
+        #### GO BACKWARD ###
+        ####################
+
+        # (4) backpropagate through temporal affine layer
+        dh, dW_vocab, db_vocab = temporal_affine_backward(dout, cacheList.pop())
+        
+        # (3) backpropagate through RNN/LSTM
+        dwordVecs, dh0, dWx, dWh, db = rnn_backward(dh, cacheList.pop())
+        
+        # (2) backpropagate through word embedding
+        dW_embed = word_embedding_backward(dwordVecs, cacheList.pop())
+        
+        # (1) backpropagate through initial hidden state projection
+        _, dW_proj, db_proj = affine_backward(dh0, cacheList.pop())
+        
+        # push gradients to dictionary
+        grads['W_proj'] = dW_proj
+        grads['b_proj'] = db_proj
+        grads['W_embed'] = dW_embed
+        grads['Wx'] = dWx
+        grads['Wh'] = dWh
+        grads['b']  = db
+        grads['W_vocab'] = dW_vocab
+        grads['b_vocab'] = db_vocab
+        
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
