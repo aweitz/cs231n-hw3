@@ -147,13 +147,15 @@ class CaptioningRNN(object):
         cacheList = list()
         cacheList.append(cacheTmp)
         
-        # (2) transform wods in caption_in from indices to vectors
+        # (2) transform words in caption_in from indices to vectors
         wordVecs, cacheTmp = word_embedding_forward(captions_in, W_embed)
         cacheList.append(cacheTmp)
 
         # (3) use RNN/LSTM to produce hidden state vectors for all timesteps
         if self.cell_type == 'rnn':
             h, cacheTmp = rnn_forward(wordVecs, h0, Wx, Wh, b)
+        elif self.cell_type == 'lstm':
+            h, cacheTmp = lstm_forward(wordVecs, h0, Wx, Wh, b)
         cacheList.append(cacheTmp)
 
         # (4) compute scores over the vocabulary at every timestep using hidden states
@@ -171,8 +173,11 @@ class CaptioningRNN(object):
         dh, dW_vocab, db_vocab = temporal_affine_backward(dout, cacheList.pop())
         
         # (3) backpropagate through RNN/LSTM
-        dwordVecs, dh0, dWx, dWh, db = rnn_backward(dh, cacheList.pop())
-        
+        if self.cell_type == 'rnn':
+            dwordVecs, dh0, dWx, dWh, db = rnn_backward(dh, cacheList.pop())
+        elif self.cell_type == 'lstm':
+            dwordVecs, dh0, dWx, dWh, db = lstm_backward(dh, cacheList.pop())
+
         # (2) backpropagate through word embedding
         dW_embed = word_embedding_backward(dwordVecs, cacheList.pop())
         
@@ -250,7 +255,34 @@ class CaptioningRNN(object):
         # functions; you'll need to call rnn_step_forward or lstm_step_forward in #
         # a loop.                                                                 #
         ###########################################################################
-        pass
+        
+        # initalize cell state for lstm
+        c = 0
+        
+        # initialize hidden state by applying affine transform to input features
+        h = affine_forward(features, W_proj, b_proj)[0]
+
+        # first word fed to RNN should be <START> token
+        captions[:,0] = self._start
+        
+        # iterate over time steps
+        for cnt in range(max_length-1):
+            
+            # (1) embed the previous word using the learned word embeddings
+            wordVecs = word_embedding_forward(captions, W_embed)[0]
+            
+            # (2) Make RNN step using previous hidden state and embedded current word
+            if self.cell_type == 'rnn':
+                h = rnn_step_forward(wordVecs[:,cnt,:], h, Wx, Wh, b)[0]
+            elif self.cell_type == 'lstm':
+                h, c, _ = lstm_step_forward(wordVecs[:,cnt,:], h, c, Wx, Wh, b)
+            
+            # (3) Apply learned affine transform to next hidden state to get scores
+            scores = affine_forward(h, W_vocab, b_vocab)[0]
+            
+            # (4) Output word with highest score as next word, and write to captions
+            captions[:,cnt+1] = np.argmax(scores,axis=1)
+                        
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################

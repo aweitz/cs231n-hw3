@@ -273,7 +273,21 @@ def lstm_step_forward(x, prev_h, prev_c, Wx, Wh, b):
     # TODO: Implement the forward pass for a single timestep of an LSTM.        #
     # You may want to use the numerically stable sigmoid implementation above.  #
     #############################################################################
-    pass
+    N,D = x.shape
+    H = prev_h.shape[1]
+    
+    a = x.dot(Wx) + Wh.T.dot(prev_h.T).T + b
+    ai,af,ao,ag = np.split(a,4,axis=1)
+    
+    i = sigmoid(ai)
+    f = sigmoid(af)
+    o = sigmoid(ao)
+    g = np.tanh(ag)
+    
+    next_c = f*prev_c + i*g
+    next_h = o*np.tanh(next_c)
+    
+    cache = (a,i,f,o,g,x, prev_h, prev_c, Wx, Wh, b, next_c)
     ##############################################################################
     #                               END OF YOUR CODE                             #
     ##############################################################################
@@ -305,7 +319,30 @@ def lstm_step_backward(dnext_h, dnext_c, cache):
     # HINT: For sigmoid and tanh you can compute local derivatives in terms of  #
     # the output value from the nonlinearity.                                   #
     #############################################################################
-    pass
+    a,i,f,o,g,x, prev_h, prev_c, Wx, Wh, b, next_c = cache
+    z = np.tanh(next_c)
+    
+    dz = dnext_h*o
+    dnext_c += (1 - np.square(z))*dz
+    dprev_c = dnext_c*f
+    di = dnext_c*g
+    df = dnext_c*prev_c
+    do = dnext_h*z
+    dg = dnext_c*i
+    
+    dai = i*(1-i)*di
+    daf = f*(1-f)*df
+    dao = o*(1-o)*do
+    dag = (1 - np.square(g))*dg
+    
+    da = np.concatenate((dai,daf,dao,dag),axis=1)    
+    db = np.sum(da,axis=0,keepdims=True)
+   
+    dWh= da.T.dot(prev_h).T
+    dprev_h = da.dot(Wh.T)
+    
+    dWx= da.T.dot(x).T
+    dx = da.dot(Wx.T)
     ##############################################################################
     #                               END OF YOUR CODE                             #
     ##############################################################################
@@ -340,7 +377,20 @@ def lstm_forward(x, h0, Wx, Wh, b):
     # TODO: Implement the forward pass for an LSTM over an entire timeseries.   #
     # You should use the lstm_step_forward function that you just defined.      #
     #############################################################################
-    pass
+    N,T,D = x.shape
+    H = Wh.shape[0]
+    h = np.zeros((N,T,H))    
+    c0 = np.zeros(h0.shape)
+    cache = list()
+
+    for cnt in range(T):
+        xStep = x[:,cnt,:]
+        if cnt == 0:
+            next_h, next_c, cacheTemp = lstm_step_forward(xStep, h0, c0, Wx, Wh, b)
+        else:
+            next_h, next_c, cacheTemp = lstm_step_forward(xStep, next_h, next_c, Wx, Wh, b)
+        h[:,cnt,:] = next_h
+        cache.append(cacheTemp)
     ##############################################################################
     #                               END OF YOUR CODE                             #
     ##############################################################################
@@ -368,7 +418,32 @@ def lstm_backward(dh, cache):
     # TODO: Implement the backward pass for an LSTM over an entire timeseries.  #
     # You should use the lstm_step_backward function that you just defined.     #
     #############################################################################
-    pass
+    N,T,H = dh.shape
+    
+    # iterate over states, starting at the end
+    for cnt in range(T-1,-1,-1):
+        
+        # combine dprev_h to the upstream gradient, unless we're at the end (no prevh)
+        if cnt == T-1:
+            dprev_h = 0
+            dprev_c = 0
+        dxTmp, dprev_h, dprev_c, dWxTmp, dWhTmp, dbTmp = lstm_step_backward(dh[:,cnt,:] + dprev_h, dprev_c, cache.pop())
+        
+        # initialize output variable sizes on first pass
+        if cnt == T-1:
+            D = dWxTmp.shape[0]
+            dx = np.zeros((N,T,D))
+            dWx = np.zeros((D,4*H))
+            dWh = np.zeros((H,4*H))
+            db  = np.zeros((4*H,))
+        
+        # add variable gradients at each state to running summation
+        dx[:,cnt,:] = dxTmp
+        db  += np.squeeze(dbTmp)
+        dWx += dWxTmp
+        dWh += dWhTmp
+        
+    dh0 = dprev_h
     ##############################################################################
     #                               END OF YOUR CODE                             #
     ##############################################################################
